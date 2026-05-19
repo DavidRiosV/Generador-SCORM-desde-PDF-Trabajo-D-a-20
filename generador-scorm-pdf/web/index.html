@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Curso SCORM</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<header>
+    <h1 id="titulo">Curso</h1>
+    <div id="progreso"><span id="pasoActual">0</span> / <span id="pasoTotal">0</span></div>
+</header>
+
+<main id="contenedor">
+    <section id="actividad"></section>
+    <footer class="botones">
+        <button id="comprobar" type="button">Comprobar</button>
+        <button id="siguiente" type="button" disabled>Siguiente</button>
+    </section>
+</main>
+
+<section id="resultado" class="oculto">
+    <h2>Resultado final</h2>
+    <p class="nota"><span id="aciertos">0</span> / <span id="total">0</span> aciertos</p>
+    <p class="porcentaje"><span id="porcentaje">0</span>%</p>
+    <p id="estado"></p>
+    <button id="reiniciar" type="button">Reiniciar</button>
+</section>
+
+<script src="scormApi.js"></script>
+<script src="actividades.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
