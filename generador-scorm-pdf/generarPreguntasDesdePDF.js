@@ -1,53 +1,199 @@
-const fs = require("fs");
+const readline = require("readline");
 const path = require("path");
-const leerPDF = require("./pdfLeer");
-const limpiarTexto = require("./limpiartexto");
-const extraerPreguntas = require("./pdfPreguntas");
-const buscarRespuesta = require("./buscarRespuesta");
-const generarOpciones = require("./generarOpciones");
+const fs = require("fs");
 
-async function generarPreguntasDesdePDF(rutaPDF, salidaJSON) {
-    if (!fs.existsSync(rutaPDF)) throw new Error(`No existe el PDF: ${rutaPDF}`);
+const { generarActividades } = require("./generarActividades");
+const { empaquetarSCORM, generarVistaPreviaLocal } = require("./scormGenerator");
+const generarPreguntasDesdePDF = require("./generarPreguntasDesdePDF");
 
-    console.log(`Leyendo ${rutaPDF}...`);
-    const textoCrudo = await leerPDF(rutaPDF);
+const PREGUNTAS_PATH = path.join(__dirname, "output", "preguntas.json");
+const PDF_DEFAULT = path.join(__dirname, "pdf", "documento.pdf");
 
-    console.log("Limpiando texto...");
-    const textoLimpio = limpiarTexto(textoCrudo);
+function pregunta(rl, txt) {
+    return new Promise(resolve => rl.question(txt, r => resolve(r.trim())));
+}
 
-    console.log("Buscando preguntas...");
-    const enunciados = extraerPreguntas(textoCrudo);
-    if (enunciados.length === 0) {
-        throw new Error("No se han detectado preguntas (el PDF debe tener frases con '¿...?').");
+function leerPreguntas() {
+    if (!fs.existsSync(PREGUNTAS_PATH)) {
+        throw new Error("No existe preguntas.json. Genera preguntas desde PDF primero.");
     }
-    console.log(`   ${enunciados.length} preguntas detectadas.`);
+    return JSON.parse(fs.readFileSync(PREGUNTAS_PATH, "utf-8"));
+}
 
-    const preguntas = enunciados.map((pregunta, i) => {
-        const correcta = buscarRespuesta(textoLimpio, pregunta);
-        const opciones = generarOpciones(textoLimpio, correcta);
-        const correctaIndex = opciones.indexOf(correcta);
+/* =========================
+   GENERADOR AUTOMATICO
+========================= */
+function generarConfigAleatoria(total) {
+    function aleatorio(max) {
+        return Math.floor(Math.random() * (max + 1));
+    }
+
+    if (total < 4) {
         return {
-            id: i + 1,
-            pregunta,
-            tipo: "test",
-            opciones,
-            correcta: correctaIndex >= 0 ? correctaIndex : 0
+            test: total,
+            vf: 0,
+            matching: 0,
+            fill: 0
         };
-    });
+    }
 
-    fs.mkdirSync(path.dirname(salidaJSON), { recursive: true });
-    fs.writeFileSync(salidaJSON, JSON.stringify(preguntas, null, 2), "utf-8");
-    console.log(`Guardado: ${salidaJSON}`);
-    return preguntas;
+    let restantes = total - 4;
+
+    let test = 1;
+    let vf = 1;
+    let matching = 1;
+    let fill = 1;
+
+    const extraTest = aleatorio(restantes);
+    test += extraTest;
+    restantes -= extraTest;
+
+    const extraVF = aleatorio(restantes);
+    vf += extraVF;
+    restantes -= extraVF;
+
+    const extraMatching = aleatorio(restantes);
+    matching += extraMatching;
+    restantes -= extraMatching;
+
+    fill += restantes;
+
+    return { test, vf, matching, fill };
 }
 
-module.exports = generarPreguntasDesdePDF;
+/* =========================
+   SCORM
+========================= */
+async function flujoSCORM(rl) {
+    const preguntas = leerPreguntas();
 
-if (require.main === module) {
-    const ruta = process.argv[2] || path.join(__dirname, "pdf", "documento.pdf");
-    const salida = process.argv[3] || path.join(__dirname, "output", "preguntas.json");
-    generarPreguntasDesdePDF(ruta, salida).catch(e => {
-        console.error("Error:", e.message);
-        process.exit(1);
-    });
+    const config = generarConfigAleatoria(preguntas.length);
+
+    console.log("\nDistribucion automatica:");
+    console.log(config);
+
+    const actividades = generarActividades(preguntas, config);
+    const tituloInput = await pregunta(rl, "\nTitulo del curso (Enter = 'Curso SCORM'): ");
+    const titulo = tituloInput || "Curso SCORM";
+
+    const id = titulo.toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "") || "curso";
+
+    const salida = path.join(__dirname, "output", `${id}-scorm.zip`);
+
+    console.log(`\nGenerando ${actividades.length} actividades...`);
+
+    const res = await empaquetarSCORM({ actividades, titulo, id, salida });
+
+    console.log(`Paquete SCORM creado: ${res.ruta} (${(res.bytes / 1024).toFixed(1)} KB)`);
+
+    const verLocal = (await pregunta(
+        rl,
+        "\n¿Quieres vista previa local? (s/N): "
+    )).toLowerCase();
+
+    if (verLocal === "s" || verLocal === "si") {
+        const carpeta = path.join(__dirname, "output", `${id}-preview`);
+        const indexPath = await generarVistaPreviaLocal({ actividades, titulo, carpeta });
+        console.log(`Vista previa: ${indexPath}`);
+    }
+
+    console.log("\nSube el ZIP al LMS como SCORM.");
 }
+
+/* =========================
+   EXAMEN HTML
+========================= */
+async function flujoExamenHTML(rl) {
+    const preguntas = leerPreguntas();
+
+    const config = generarConfigAleatoria(preguntas.length);
+
+    console.log("\nDistribucion automatica:");
+    console.log(config);
+
+    const actividades = generarActividades(preguntas, config);
+
+    const tituloInput = await pregunta(rl, "\nTitulo del curso (Enter = 'Curso'): ");
+    const titulo = tituloInput || "Curso";
+
+    const id = titulo.toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "") || "curso";
+
+    const carpeta = path.join(__dirname, "output", `${id}-preview`);
+
+    const indexPath = await generarVistaPreviaLocal({
+        actividades,
+        titulo,
+        carpeta
+    });
+
+    console.log(`\nExamen HTML listo:\n${indexPath}`);
+}
+
+/* =========================
+   OPCIONES MENU
+========================= */
+async function pedirOpcionValida(rl) {
+    let opcion = "";
+
+    while (true) {
+        opcion = await pregunta(rl, "\nElige opcion (1-3): ");
+
+        const num = parseInt(opcion, 10);
+
+        if (num >= 1 && num <= 3) return opcion;
+
+        console.log("Opcion invalida (1-3)");
+    }
+}
+
+/* =========================
+   MENU PRINCIPAL
+========================= */
+async function iniciarMenu() {
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout
+    });
+
+    console.log("\n===== GENERADOR SCORM / EXAMEN =====");
+    console.log("1) Examen HTML local");
+    console.log("2) Generar SCORM (.zip)");
+    console.log("3) Regenerar preguntas desde PDF");
+
+    try {
+        const op = await pedirOpcionValida(rl);
+
+        if (op === "1") {
+            await flujoExamenHTML(rl);
+        }
+
+        else if (op === "2") {
+            await flujoSCORM(rl);
+        }
+
+        else if (op === "3") {
+            const ruta = await pregunta(
+                rl,
+                `Ruta del PDF (Enter = ${PDF_DEFAULT}): `
+            );
+
+            await generarPreguntasDesdePDF(
+                ruta || PDF_DEFAULT,
+                PREGUNTAS_PATH
+            );
+
+            console.log("\nPreguntas generadas correctamente.");
+        }
+
+    } catch (err) {
+        console.error("Error:", err.message);
+    }
+
+    rl.close();
+}
+
+module.exports = iniciarMenu;
