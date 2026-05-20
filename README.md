@@ -110,7 +110,7 @@ cd Generador-SCORM-desde-PDF-Trabajo-D-a-20
 
 ## ⚠️ IMPORTANTE: Node.js 18.20 obligatorio
 
-Este proyecto **solo funciona correctamente con Node.js 18.20** o una versión inferior.
+Este proyecto **solo funciona correctamente con Node.js 18.20**.
 
 ---
 
